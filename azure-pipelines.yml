@@ -1,0 +1,145 @@
+# Pipeline final del demo "Examen de Licencia de Héroe"
+# Build -> Test -> Staging (slot) -> Aprobación -> Producción (swap)
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  azureSubscription: 'sc-hero-agency'     # nombre del service connection
+  webAppName: 'hero-agency-luis'          # nombre de tu App Service
+  resourceGroup: 'rg-hero-agency'
+  stagingUrl: 'https://hero-agency-luis-staging.azurewebsites.net'
+  prodUrl: 'https://hero-agency-luis.azurewebsites.net'
+  nodeVersion: '22.x'
+
+stages:
+# ── Misión 1 y 2: Despertar del Quirk + El brazo roto ──────────────────
+- stage: Build
+  displayName: 'Build y Test'
+  jobs:
+  - job: BuildJob
+    displayName: 'Construir y probar'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Instalar Node.js'
+      inputs:
+        versionSpec: '$(nodeVersion)'
+
+    - script: npm ci
+      displayName: 'Instalar dependencias'
+
+    - script: npm run test:ci
+      displayName: 'Ejecutar tests'
+
+    - task: PublishTestResults@2
+      displayName: 'Publicar resultados del examen'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results.xml'
+        testRunTitle: 'Examen de Licencia'
+
+    - task: CopyFiles@2
+      displayName: 'Preparar archivos de la app'
+      inputs:
+        Contents: |
+          package.json
+          package-lock.json
+          src/**
+          public/**
+          node_modules/**
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/app'
+
+    - task: ArchiveFiles@2
+      displayName: 'Empaquetar artefacto'
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
+
+    - publish: '$(Build.ArtifactStagingDirectory)/app.zip'
+      artifact: 'app'
+      displayName: 'Publicar artefacto'
+
+# ── Misión 4: Primera patrulla en staging ──────────────────────────────
+- stage: Staging
+  displayName: 'Deploy a Staging'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployStaging
+    displayName: 'Desplegar al slot staging'
+    environment: 'staging'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            displayName: 'Desplegar en App Service (slot staging)'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webAppLinux'
+              appName: '$(webAppName)'
+              deployToSlotOrASE: true
+              resourceGroupName: '$(resourceGroup)'
+              slotName: 'staging'
+              package: '$(Pipeline.Workspace)/app/app.zip'
+
+          - script: |
+              for i in $(seq 1 12); do
+                if curl -fsS "$(stagingUrl)/health"; then
+                  echo ""; echo "Smoke test OK en staging"; exit 0
+                fi
+                echo "Intento $i: aún no responde, reintentando en 10s..."
+                sleep 10
+              done
+              echo "##vso[task.logissue type=error]Staging no respondió al /health"
+              exit 1
+            displayName: 'Smoke test: ¡Ya estoy aquí!'
+
+# ── Misión 5: Licencia oficial ─────────────────────────────────────────
+# La aprobación NO va en el YAML: se configura en
+# Pipelines > Environments > production > Approvals and checks
+- stage: Production
+  displayName: 'Deploy a Producción'
+  dependsOn: Staging
+  condition: succeeded()
+  jobs:
+  - deployment: DeployProduction
+    displayName: 'Swap staging -> producción'
+    environment: 'production'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: none
+
+          - task: AzureAppServiceManage@0
+            displayName: 'Swap de slots (blue/green)'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              Action: 'Swap Slots'
+              WebAppName: '$(webAppName)'
+              ResourceGroupName: '$(resourceGroup)'
+              SourceSlot: 'staging'
+
+          - script: |
+              for i in $(seq 1 12); do
+                if curl -fsS "$(prodUrl)/health"; then
+                  echo ""; echo "Smoke test OK en producción. Plus Ultra"; exit 0
+                fi
+                echo "Intento $i: aún no responde, reintentando en 10s..."
+                sleep 10
+              done
+              echo "##vso[task.logissue type=error]Producción no respondió al /health"
+              exit 1
+            displayName: 'Smoke test en producción'

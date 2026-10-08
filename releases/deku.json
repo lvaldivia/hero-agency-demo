@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "hero": "Deku",
+  "quirk": "One For All",
+  "power": 100,
+  "message": "Primer deploy en producción. Todo bajo control, sin brazos rotos.",
+  "color": "#1f8a5b",
+  "accent": "#d7f75b",
+  "villain": false
+}

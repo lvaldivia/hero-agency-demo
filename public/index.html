@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hero Agency</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Archivo:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --hero: #1f8a5b;
+    --accent: #d7f75b;
+    --ink: #101418;
+    --paper: #fffdf6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: "Archivo", system-ui, sans-serif;
+    color: var(--paper);
+    background-color: var(--hero);
+    background-image: radial-gradient(rgba(0,0,0,.18) 1.4px, transparent 1.6px);
+    background-size: 10px 10px;
+    transition: background-color .6s ease;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 0 20px 40px; }
+
+  .tape {
+    display: flex; justify-content: space-between; align-items: center;
+    margin: 0 -20px 28px; padding: 10px 20px;
+    background: var(--ink); color: var(--accent);
+    font-weight: 800; font-size: 15px;
+  }
+  .tape.staging {
+    background: repeating-linear-gradient(-45deg, #ffd23f 0 14px, #101418 14px 28px);
+    color: var(--ink);
+  }
+  .tape.staging span { background: #ffd23f; padding: 2px 8px; }
+
+  .quirk { font-weight: 600; font-size: 17px; margin: 0 0 4px; opacity: .9; }
+  h1 {
+    font-family: "Bangers", "Impact", sans-serif;
+    font-weight: 400;
+    font-size: clamp(56px, 18vw, 104px);
+    line-height: .9; letter-spacing: 1px;
+    margin: 0 0 22px;
+    color: var(--paper);
+    text-shadow: 4px 4px 0 var(--ink), 6px 6px 0 var(--accent);
+    transform: rotate(-3deg);
+    transform-origin: left;
+  }
+
+  .power { margin: 0 0 26px; }
+  .power-label { display: flex; justify-content: space-between; font-weight: 800; font-size: 14px; margin-bottom: 6px; }
+  .power-bar { height: 18px; background: var(--ink); border: 3px solid var(--ink); }
+  .power-fill { height: 100%; width: 0; background: var(--accent); transition: width 1s ease; }
+
+  .bubble {
+    position: relative;
+    background: var(--paper); color: var(--ink);
+    border: 3px solid var(--ink);
+    border-radius: 18px;
+    padding: 16px 18px;
+    font-size: 18px; line-height: 1.4; font-weight: 600;
+    margin: 0 0 36px;
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+  .bubble::after {
+    content: ""; position: absolute; left: 28px; bottom: -18px;
+    border: 9px solid transparent; border-top: 12px solid var(--ink);
+  }
+
+  .vote { background: var(--ink); padding: 20px; box-shadow: 6px 6px 0 rgba(0,0,0,.35); }
+  .vote h2 { font-family: "Bangers", "Impact", sans-serif; font-weight: 400; font-size: 30px; margin: 0 0 4px; color: var(--accent); letter-spacing: .5px; }
+  .vote p { margin: 0 0 16px; font-size: 15px; opacity: .85; }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button {
+    font: 800 18px "Archivo", sans-serif;
+    padding: 16px 10px; border: 3px solid var(--paper); cursor: pointer;
+    background: transparent; color: var(--paper);
+  }
+  button.pasa { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+  button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .count { display: block; font-size: 32px; font-family: "Bangers", sans-serif; font-weight: 400; margin-top: 4px; }
+  .voted { margin-top: 12px; font-size: 14px; min-height: 1.2em; color: var(--accent); }
+
+  .updated { margin-top: 22px; font-size: 13px; opacity: .75; text-align: center; }
+
+  /* Momento del deploy: una sola animación cuando cambia la versión */
+  .flash {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    background: var(--accent); color: var(--ink);
+    font-family: "Bangers", sans-serif; font-size: clamp(48px, 14vw, 96px);
+    text-align: center; line-height: .95; padding: 20px;
+    opacity: 0; pointer-events: none; z-index: 10;
+  }
+  .flash.show { animation: flash 1.8s ease forwards; }
+  @keyframes flash {
+    0% { opacity: 0; transform: scale(1.4); }
+    15% { opacity: 1; transform: scale(1); }
+    75% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* Modo villano */
+  body.villain {
+    background-image:
+      repeating-linear-gradient(0deg, rgba(255,46,77,.08) 0 2px, transparent 2px 6px),
+      radial-gradient(rgba(255,46,77,.25) 1.4px, transparent 1.6px);
+    background-size: auto, 10px 10px;
+  }
+  body.villain h1 { animation: decay 2.4s infinite steps(1); text-shadow: 4px 4px 0 #000, -3px 0 0 var(--accent); }
+  body.villain .bubble { background: #1a0a12; color: #ffd6dc; border-color: var(--accent); box-shadow: 6px 6px 0 var(--accent); }
+  body.villain .bubble::after { border-top-color: var(--accent); }
+  @keyframes decay {
+    0%, 100% { transform: rotate(-3deg); clip-path: none; }
+    92% { transform: rotate(-3deg) translateX(-4px); clip-path: inset(10% 0 40% 0); }
+    96% { transform: rotate(-2deg) translateX(3px); clip-path: inset(55% 0 5% 0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="tape" id="tape"><span id="env">Conectando…</span><span id="version"></span></div>
+
+  <p class="quirk" id="quirk">&nbsp;</p>
+  <h1 id="hero">Hero Agency</h1>
+
+  <div class="power" aria-label="Nivel de poder">
+    <div class="power-label"><span>Poder</span><span id="power-value">0%</span></div>
+    <div class="power-bar"><div class="power-fill" id="power-fill"></div></div>
+  </div>
+
+  <div class="bubble" id="message">Esperando el primer deploy…</div>
+
+  <section class="vote" aria-labelledby="vote-title">
+    <h2 id="vote-title">¿El próximo deploy pasa o se rompe?</h2>
+    <p>Vota antes de que el pipeline termine.</p>
+    <div class="buttons">
+      <button class="pasa" id="btn-pasa" data-choice="pasa">Pasa <span class="count" id="count-pasa">0</span></button>
+      <button class="rompe" id="btn-rompe" data-choice="rompe">Se rompe <span class="count" id="count-rompe">0</span></button>
+    </div>
+    <div class="voted" id="voted" aria-live="polite"></div>
+  </section>
+
+  <p class="updated" id="updated">&nbsp;</p>
+</main>
+
+<div class="flash" id="flash" aria-hidden="true"></div>
+
+<script>
+  const ENV_LABELS = { production: 'PRODUCCIÓN', staging: 'STAGING', local: 'LOCAL' };
+  let currentVersion = null;
+  let lastOk = null;
+
+  function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function safeSet(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+
+  function render(data) {
+    const root = document.documentElement.style;
+    root.setProperty('--hero', data.color);
+    root.setProperty('--accent', data.accent);
+    document.body.classList.toggle('villain', Boolean(data.villain));
+
+    const env = ENV_LABELS[data.environment] || data.environment.toUpperCase();
+    document.getElementById('env').textContent = env;
+    document.getElementById('version').textContent = 'v' + data.version;
+    document.getElementById('tape').classList.toggle('staging', data.environment === 'staging');
+
+    document.getElementById('hero').textContent = data.hero;
+    document.getElementById('quirk').textContent = 'Quirk: ' + data.quirk;
+    document.getElementById('message').textContent = data.message;
+    document.getElementById('power-value').textContent = data.power + '%';
+    document.getElementById('power-fill').style.width = data.power + '%';
+    document.title = data.hero + ' v' + data.version;
+
+    if (currentVersion && currentVersion !== data.version) {
+      const flash = document.getElementById('flash');
+      flash.textContent = data.villain ? '¡Ataque villano!' : '¡Nuevo deploy! v' + data.version;
+      flash.classList.remove('show');
+      void flash.offsetWidth;
+      flash.classList.add('show');
+    }
+    currentVersion = data.version;
+  }
+
+  function renderVotes(v) {
+    document.getElementById('count-pasa').textContent = v.pasa;
+    document.getElementById('count-rompe').textContent = v.rompe;
+    const voted = safeGet('voted-round') === String(v.round);
+    document.getElementById('btn-pasa').disabled = voted;
+    document.getElementById('btn-rompe').disabled = voted;
+    document.getElementById('voted').textContent = voted ? 'Voto registrado. Mira la pantalla del ponente.' : '';
+  }
+
+  async function poll() {
+    try {
+      const [version, votes] = await Promise.all([
+        fetch('/api/version', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/votes', { cache: 'no-store' }).then((r) => r.json()),
+      ]);
+      render(version);
+      renderVotes(votes);
+      lastOk = Date.now();
+      document.getElementById('updated').textContent = 'Conectado a la app en vivo. Se actualiza sola.';
+    } catch (e) {
+      document.getElementById('updated').textContent = 'Sin conexión con la app. Reintentando…';
+    }
+  }
+
+  document.querySelectorAll('button[data-choice]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const res = await fetch('/api/vote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice: btn.dataset.choice }),
+      });
+      const v = await res.json();
+      safeSet('voted-round', String(v.round));
+      renderVotes(v);
+    });
+  });
+
+  poll();
+  setInterval(poll, 5000);
+</script>
+</body>
+</html>

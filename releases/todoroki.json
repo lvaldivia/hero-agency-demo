@@ -1,0 +1,10 @@
+{
+  "version": "1.1.0",
+  "hero": "Shoto Todoroki",
+  "quirk": "Medio frío, medio caliente",
+  "power": 95,
+  "message": "Blue/green como mi quirk: dos ambientes, un solo héroe en producción.",
+  "color": "#2c6fd6",
+  "accent": "#ff5a3c",
+  "villain": false
+}

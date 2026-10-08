@@ -1,0 +1,10 @@
+{
+  "version": "6.6.6",
+  "hero": "Tomura Shigaraki",
+  "quirk": "Decay",
+  "power": 100,
+  "message": "Los tests pasaron, pero esta versión está podrida. Llamen a Aizawa: rollback.",
+  "color": "#2a0f1f",
+  "accent": "#ff2e4d",
+  "villain": true
+}

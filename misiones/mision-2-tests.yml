@@ -1,0 +1,68 @@
+# Misión 2 del demo "Examen de Licencia de Héroe"
+# Build + tests: el pipeline bloquea el código roto.
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  azureSubscription: 'sc-hero-agency'     # nombre del service connection
+  webAppName: 'hero-agency-luis'          # nombre de tu App Service
+  resourceGroup: 'rg-hero-agency'
+  stagingUrl: 'https://hero-agency-luis-staging.azurewebsites.net'
+  prodUrl: 'https://hero-agency-luis.azurewebsites.net'
+  nodeVersion: '22.x'
+
+stages:
+# ── Misión 1 y 2: Despertar del Quirk + El brazo roto ──────────────────
+- stage: Build
+  displayName: 'Build y Test'
+  jobs:
+  - job: BuildJob
+    displayName: 'Construir y probar'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Instalar Node.js'
+      inputs:
+        versionSpec: '$(nodeVersion)'
+
+    - script: npm ci
+      displayName: 'Instalar dependencias'
+
+    - script: npm run test:ci
+      displayName: 'Ejecutar tests'
+
+    - task: PublishTestResults@2
+      displayName: 'Publicar resultados del examen'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results.xml'
+        testRunTitle: 'Examen de Licencia'
+
+    - task: CopyFiles@2
+      displayName: 'Preparar archivos de la app'
+      inputs:
+        Contents: |
+          package.json
+          package-lock.json
+          src/**
+          public/**
+          node_modules/**
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/app'
+
+    - task: ArchiveFiles@2
+      displayName: 'Empaquetar artefacto'
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
+
+    - publish: '$(Build.ArtifactStagingDirectory)/app.zip'
+      artifact: 'app'
+      displayName: 'Publicar artefacto'
+

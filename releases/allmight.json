@@ -1,0 +1,10 @@
+{
+  "version": "1.2.0",
+  "hero": "All Might",
+  "quirk": "One For All",
+  "power": 100,
+  "message": "¡Ya estoy aquí! El pipeline aprobó y el deploy llegó a producción.",
+  "color": "#1d3a8a",
+  "accent": "#ffd23f",
+  "villain": false
+}

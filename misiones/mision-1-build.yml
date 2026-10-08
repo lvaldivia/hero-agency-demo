@@ -1,0 +1,57 @@
+# Misión 1 del demo "Examen de Licencia de Héroe"
+# Solo build: el primer pipeline en verde.
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  azureSubscription: 'sc-hero-agency'     # nombre del service connection
+  webAppName: 'hero-agency-luis'          # nombre de tu App Service
+  resourceGroup: 'rg-hero-agency'
+  stagingUrl: 'https://hero-agency-luis-staging.azurewebsites.net'
+  prodUrl: 'https://hero-agency-luis.azurewebsites.net'
+  nodeVersion: '22.x'
+
+stages:
+# ── Misión 1: Despertar del Quirk ──────────────────
+- stage: Build
+  displayName: 'Build'
+  jobs:
+  - job: BuildJob
+    displayName: 'Construir'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Instalar Node.js'
+      inputs:
+        versionSpec: '$(nodeVersion)'
+
+    - script: npm ci
+      displayName: 'Instalar dependencias'
+
+    - task: CopyFiles@2
+      displayName: 'Preparar archivos de la app'
+      inputs:
+        Contents: |
+          package.json
+          package-lock.json
+          src/**
+          public/**
+          node_modules/**
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/app'
+
+    - task: ArchiveFiles@2
+      displayName: 'Empaquetar artefacto'
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
+
+    - publish: '$(Build.ArtifactStagingDirectory)/app.zip'
+      artifact: 'app'
+      displayName: 'Publicar artefacto'
+
