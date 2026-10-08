@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test test/*.test.js",
-    "test:ci": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml test/*.test.js",
+    "test:ci": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/junit-reporter.js --test-reporter-destination=test-results.xml test/*.test.js",
     "release": "node scripts/set-release.js"
   },
   "dependencies": {
