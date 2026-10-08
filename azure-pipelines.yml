@@ -1,5 +1,5 @@
-# Misión 5 del demo (pipeline final)
-# Build (tests + imagen Docker) -> Staging -> Aprobación -> Producción (misma imagen)
+# Misión 1 del demo "Examen de Licencia de Héroe"
+# Solo build: construir la imagen Docker y subirla al ACR.
 
 trigger:
   branches:
@@ -20,34 +20,15 @@ variables:
   nodeVersion: '22.x'
 
 stages:
-# ── Misión 1 y 2: Despertar del Quirk + El brazo roto ──────────────────
+# ── Misión 1: Despertar del Quirk ──────────────────
 - stage: Build
-  displayName: 'Build y Test'
+  displayName: 'Build'
   jobs:
   - job: BuildJob
-    displayName: 'Construir y probar'
+    displayName: 'Construir'
     pool:
       name: 'Default'          # agente self-hosted (laptop). Plan B: vmImage: 'ubuntu-latest'
     steps:
-    - task: NodeTool@0
-      displayName: 'Instalar Node.js'
-      inputs:
-        versionSpec: '$(nodeVersion)'
-
-    - script: npm ci
-      displayName: 'Instalar dependencias'
-
-    - script: npm run test:ci
-      displayName: 'Ejecutar tests'
-
-    - task: PublishTestResults@2
-      displayName: 'Publicar resultados del examen'
-      condition: succeededOrFailed()
-      inputs:
-        testResultsFormat: 'JUnit'
-        testResultsFiles: 'test-results.xml'
-        testRunTitle: 'Examen de Licencia'
-
     - task: Docker@2
       displayName: 'Construir y publicar imagen Docker'
       inputs:
@@ -58,98 +39,3 @@ stages:
         tags: |
           $(tag)
           latest
-
-# ── Misión 4: Primera patrulla en staging ──────────────────────────────
-- stage: Staging
-  displayName: 'Deploy a Staging'
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-  jobs:
-  - deployment: DeployStaging
-    displayName: 'Desplegar a staging'
-    environment: 'staging'
-    pool:
-      name: 'Default'          # agente self-hosted (laptop). Plan B: vmImage: 'ubuntu-latest'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - download: none
-
-          - task: AzureContainerApps@1
-            displayName: 'Desplegar en Container Apps (staging)'
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              containerAppName: '$(stagingAppName)'
-              resourceGroup: '$(resourceGroup)'
-              imageToDeploy: '$(containerRegistry)/$(imageRepository):$(tag)'
-
-          - script: |
-              for i in $(seq 1 12); do
-                if curl -fsS "$(stagingUrl)/health"; then
-                  echo ""; echo "Smoke test OK en staging"; exit 0
-                fi
-                echo "Intento $i: aún no responde, reintentando en 10s..."
-                sleep 10
-              done
-              echo "##vso[task.logissue type=error]Staging no respondió al /health"
-              exit 1
-            displayName: 'Smoke test: ¡Ya estoy aquí!'
-
-# ── Misión 5: Licencia oficial ─────────────────────────────────────────
-# La aprobación NO va en el YAML: se configura en
-# Pipelines > Environments > production > Approvals and checks
-- stage: Production
-  displayName: 'Deploy a Producción'
-  dependsOn: Staging
-  condition: succeeded()
-  jobs:
-  - deployment: DeployProduction
-    displayName: 'Promover staging -> producción'
-    environment: 'production'
-    pool:
-      name: 'Default'          # agente self-hosted (laptop). Plan B: vmImage: 'ubuntu-latest'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - download: none
-
-          # No se reconstruye nada: la misma imagen que pasó por staging va a producción.
-          - task: AzureContainerApps@1
-            displayName: 'Promover la imagen probada (blue/green)'
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              containerAppName: '$(containerAppName)'
-              resourceGroup: '$(resourceGroup)'
-              imageToDeploy: '$(containerRegistry)/$(imageRepository):$(tag)'
-
-          # La revisión anterior queda activa para el rollback (Misión 6); las más viejas se apagan.
-          - task: AzureCLI@2
-            displayName: 'Guardar la revisión anterior para el rollback'
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                az extension add --name containerapp --upgrade -y -o none
-                az containerapp ingress traffic set -g "$(resourceGroup)" -n "$(containerAppName)" --revision-weight latest=100 -o none
-                OLD=$(az containerapp revision list -g "$(resourceGroup)" -n "$(containerAppName)" \
-                  --query "sort_by([?properties.active], &properties.createdTime)[].name" -o tsv | head -n -2)
-                for REV in $OLD; do
-                  az containerapp revision deactivate -g "$(resourceGroup)" -n "$(containerAppName)" --revision "$REV" -o none
-                done
-                az containerapp revision list -g "$(resourceGroup)" -n "$(containerAppName)" \
-                  --query "[?properties.active].{revision:name, trafico:properties.trafficWeight, imagen:properties.template.containers[0].image}" -o table
-
-          - script: |
-              for i in $(seq 1 12); do
-                if curl -fsS "$(prodUrl)/health"; then
-                  echo ""; echo "Smoke test OK en producción. Plus Ultra"; exit 0
-                fi
-                echo "Intento $i: aún no responde, reintentando en 10s..."
-                sleep 10
-              done
-              echo "##vso[task.logissue type=error]Producción no respondió al /health"
-              exit 1
-            displayName: 'Smoke test en producción'
