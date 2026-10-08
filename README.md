@@ -22,6 +22,7 @@ La app corre como **contenedor Docker** en **Azure Container Apps**. El pipeline
 | `infra/rollback.sh` | Rollback moviendo el tráfico a la revisión anterior (Misión 6) |
 | `infra/reset-votos.sh` | Reinicia la votación antes de cada misión |
 | `infra/cleanup.sh` | Borra todo el grupo de recursos después de la charla |
+| `infra/agente/` | Agente self-hosted de Azure Pipelines en Docker (sin cola en vivo) |
 
 Comandos locales: `npm install`, `npm test`, `npm start` (abre http://localhost:3000) y `npm run release -- todoroki` para cambiar de héroe.
 
@@ -54,7 +55,20 @@ Container Apps no tiene *deployment slots*. Staging y producción son dos apps s
 
 ### 1. Paralelismo de Azure Pipelines
 
-Las organizaciones nuevas no tienen agentes Microsoft-hosted gratis por defecto. Pide el free grant con el formulario de Microsoft (https://aka.ms/azpipelines-parallelism-request; demora unos días) o compra 1 job paralelo. Si no llega a tiempo, registra un agente self-hosted con Docker y cambia `vmImage: 'ubuntu-latest'` por `name: 'Default'` en el `pool`.
+El pipeline corre en un **agente self-hosted** (pool `Default`) dentro de un contenedor en tu laptop. Así no hay cola: con el plan gratis de agentes Microsoft-hosted un run puede esperar varios minutos antes de empezar, y eso en vivo es silencio. Además, el build reutiliza la caché de Docker.
+
+```bash
+docker build -t hero-agent:local infra/agente
+# Primera vez: registra el agente (PAT con Agent Pools: Read & manage)
+docker run -d --name hero-agent --restart unless-stopped \
+  -v hero-agent-data:/azp -v /var/run/docker.sock:/var/run/docker.sock \
+  -e AZP_URL=https://dev.azure.com/<org> -e AZP_TOKEN=<PAT> -e AZP_AGENT_NAME=laptop hero-agent:local
+# Luego recrea el contenedor sin AZP_TOKEN: la configuración queda en el volumen hero-agent-data
+```
+
+Requisitos el día de la charla: Docker Desktop abierto y la laptop con internet. En **Project settings > Agent pools > Default** el agente debe verse *Online*.
+
+Plan B sin laptop: en el `pool` cambia `name: 'Default'` por `vmImage: 'ubuntu-latest'`. Las organizaciones nuevas necesitan el free grant de Microsoft (https://aka.ms/azpipelines-parallelism-request; demora unos días) o 1 job paralelo comprado.
 
 ### 2. Organización, proyecto y repo
 

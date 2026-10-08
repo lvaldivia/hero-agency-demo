@@ -27,7 +27,7 @@ stages:
   - job: BuildJob
     displayName: 'Construir y probar'
     pool:
-      vmImage: 'ubuntu-latest'
+      name: 'Default'          # agente self-hosted (laptop). Plan B: vmImage: 'ubuntu-latest'
     steps:
     - task: NodeTool@0
       displayName: 'Instalar Node.js'
@@ -69,7 +69,7 @@ stages:
     displayName: 'Desplegar a staging'
     environment: 'staging'
     pool:
-      vmImage: 'ubuntu-latest'
+      name: 'Default'          # agente self-hosted (laptop). Plan B: vmImage: 'ubuntu-latest'
     strategy:
       runOnce:
         deploy:
@@ -108,7 +108,7 @@ stages:
     displayName: 'Promover staging -> producción'
     environment: 'production'
     pool:
-      vmImage: 'ubuntu-latest'
+      name: 'Default'          # agente self-hosted (laptop). Plan B: vmImage: 'ubuntu-latest'
     strategy:
       runOnce:
         deploy:
