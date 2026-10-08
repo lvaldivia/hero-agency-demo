@@ -1,2 +1,5 @@
 node_modules/
 test-results.xml
+
+# Contiene el ADMIN_TOKEN y datos del entorno: nunca al repo
+PREPARACION.md

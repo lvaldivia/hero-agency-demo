@@ -1,0 +1,14 @@
+.git
+.gitignore
+.gitattributes
+.dockerignore
+Dockerfile
+node_modules
+npm-debug.log
+test-results.xml
+azure-pipelines.yml
+misiones
+infra
+releases
+scripts
+*.md

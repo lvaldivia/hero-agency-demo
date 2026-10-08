@@ -1,50 +1,71 @@
 #!/usr/bin/env bash
-# Crea la infraestructura del demo en Azure.
-# Uso:  APP=hero-agency-luis ./infra/setup-azure.sh
-# Requiere Azure CLI con sesión iniciada (az login).
+# Crea la infraestructura del demo en Azure: ACR + Azure Container Apps (staging y producción).
+# Uso:  APP=hero-agency-luis ACR=acrheroagencyluis ./infra/setup-azure.sh
+# Requiere Azure CLI con sesión iniciada (az login) y Docker (para subir la imagen inicial).
 set -euo pipefail
+export MSYS_NO_PATHCONV=1   # Git Bash en Windows: no convertir /subscriptions/... en rutas locales
 
 APP="${APP:?Define APP con un nombre único, por ejemplo: APP=hero-agency-luis}"
+ACR="${ACR:?Define ACR con un nombre único (solo letras y números), por ejemplo: ACR=acrheroagencyluis}"
 RG="${RG:-rg-hero-agency}"
 LOCATION="${LOCATION:-eastus2}"
-PLAN="${PLAN:-plan-hero-agency}"
-ADMIN_TOKEN="${ADMIN_TOKEN:-$(openssl rand -hex 8)}"
+ENV_NAME="${ENV_NAME:-cae-hero-agency}"
+STAGING_APP="${STAGING_APP:-$APP-staging}"
+IMAGE_REPO="${IMAGE_REPO:-hero-agency}"
+ADMIN_TOKEN="${ADMIN_TOKEN:-$(openssl rand -hex 16)}"
+
+az extension add --name containerapp --upgrade -y -o none
+az provider register -n Microsoft.App --wait -o none
 
 echo ">> Grupo de recursos"
 az group create -n "$RG" -l "$LOCATION" -o none
 
-echo ">> App Service Plan S1 (Standard: necesario para deployment slots)"
-az appservice plan create -g "$RG" -n "$PLAN" --is-linux --sku S1 -o none
+echo ">> Azure Container Registry (Basic, sin admin user)"
+az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false -o none
+ACR_LOGIN=$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)
+IMAGE="$ACR_LOGIN/$IMAGE_REPO:inicial"
 
-echo ">> Web App de producción"
-az webapp create -g "$RG" -p "$PLAN" -n "$APP" --runtime "NODE:22-lts" -o none
+echo ">> Imagen inicial ($IMAGE) para que ambas apps arranquen sanas"
+az acr login -n "$ACR"
+docker build -t "$IMAGE" "$(dirname "$0")/.."
+docker push "$IMAGE"
 
-echo ">> Slot staging"
-az webapp deployment slot create -g "$RG" -n "$APP" --slot staging -o none
+echo ">> Container Apps Environment (consumo, sin Log Analytics)"
+az containerapp env create -g "$RG" -n "$ENV_NAME" -l "$LOCATION" --logs-destination none -o none
 
-for SLOT_ARGS in "" "--slot staging"; do
-  # Always On evita el arranque en frío durante la charla.
-  az webapp config set -g "$RG" -n "$APP" $SLOT_ARGS --always-on true -o none
-  # El artefacto ya trae node_modules: no hace falta compilar en el servidor.
-  az webapp config appsettings set -g "$RG" -n "$APP" $SLOT_ARGS -o none \
-    --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false ADMIN_TOKEN="$ADMIN_TOKEN"
-done
+# Dos apps en lugar de slots: APP_ENV queda fijo en cada una, como un "slot setting".
+# Una sola réplica en cada una: los votos viven en memoria.
+# --registry-identity system: identidad administrada con AcrPull, sin contraseñas.
+create_app() {
+  local name="$1" app_env="$2" mode="$3"
+  echo ">> Container App $name (APP_ENV=$app_env, revisiones: $mode)"
+  az containerapp create -g "$RG" -n "$name" --environment "$ENV_NAME" -o none \
+    --image "$IMAGE" --registry-server "$ACR_LOGIN" --registry-identity system \
+    --ingress external --target-port 8080 \
+    --cpu 0.25 --memory 0.5Gi --min-replicas 1 --max-replicas 1 \
+    --revisions-mode "$mode" \
+    --secrets admin-token="$ADMIN_TOKEN" \
+    --env-vars APP_ENV="$app_env" ADMIN_TOKEN=secretref:admin-token
+}
 
-# APP_ENV es "slot setting": se queda pegado al slot cuando se hace swap.
-az webapp config appsettings set -g "$RG" -n "$APP" -o none --slot-settings APP_ENV=production
-az webapp config appsettings set -g "$RG" -n "$APP" --slot staging -o none --slot-settings APP_ENV=staging
+create_app "$STAGING_APP" staging single
+# Producción en modo "multiple": la revisión anterior queda viva para el rollback (Misión 6).
+create_app "$APP" production multiple
+az containerapp ingress traffic set -g "$RG" -n "$APP" --revision-weight latest=100 -o none
 
-PROD_HOST=$(az webapp show -g "$RG" -n "$APP" --query defaultHostName -o tsv)
-STAGING_HOST=$(az webapp show -g "$RG" -n "$APP" --slot staging --query defaultHostName -o tsv)
+PROD_HOST=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+STAGING_HOST=$(az containerapp show -g "$RG" -n "$STAGING_APP" --query properties.configuration.ingress.fqdn -o tsv)
 
 echo ""
-echo "Listo. Copia estos valores en las variables de azure-pipelines.yml:"
-echo "  webAppName:    $APP"
-echo "  resourceGroup: $RG"
-echo "  prodUrl:       https://$PROD_HOST"
-echo "  stagingUrl:    https://$STAGING_HOST"
+echo "Listo. Valores para las variables de azure-pipelines.yml:"
+echo "  containerAppName:  $APP"
+echo "  stagingAppName:    $STAGING_APP"
+echo "  resourceGroup:     $RG"
+echo "  containerRegistry: $ACR_LOGIN"
+echo "  prodUrl:           https://$PROD_HOST"
+echo "  stagingUrl:        https://$STAGING_HOST"
 echo ""
-echo "Token para reiniciar votaciones (guárdalo): $ADMIN_TOKEN"
-echo "  curl -X POST \"https://$PROD_HOST/api/votes/reset?token=$ADMIN_TOKEN\""
+echo "Token para reiniciar votaciones (guárdalo en PREPARACION.md, no en el repo): $ADMIN_TOKEN"
+echo "  PROD_URL=https://$PROD_HOST ADMIN_TOKEN=$ADMIN_TOKEN ./infra/reset-votos.sh"
 echo ""
-echo "Para borrar todo después de la charla:  az group delete -n $RG --yes"
+echo "Para borrar todo después de la charla:  RG=$RG ./infra/cleanup.sh"

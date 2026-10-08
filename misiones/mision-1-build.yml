@@ -1,5 +1,5 @@
 # Misión 1 del demo "Examen de Licencia de Héroe"
-# Solo build: el primer pipeline en verde.
+# Solo build: construir la imagen Docker y subirla al ACR.
 
 trigger:
   branches:
@@ -7,11 +7,16 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'sc-hero-agency'     # nombre del service connection
-  webAppName: 'hero-agency-luis'          # nombre de tu App Service
+  azureSubscription: 'sc-hero-agency'               # service connection Azure Resource Manager
+  dockerRegistryServiceConnection: 'sc-hero-agency-acr'  # service connection Docker Registry (ACR)
+  containerRegistry: 'acrheroagencyluis.azurecr.io'
+  imageRepository: 'hero-agency'
+  tag: '$(Build.BuildId)'
+  containerAppName: 'hero-agency-luis'              # Container App de producción
+  stagingAppName: 'hero-agency-luis-staging'        # Container App de staging
   resourceGroup: 'rg-hero-agency'
-  stagingUrl: 'https://hero-agency-luis-staging.azurewebsites.net'
-  prodUrl: 'https://hero-agency-luis.azurewebsites.net'
+  stagingUrl: 'https://hero-agency-luis-staging.thankfulsea-0a741749.eastus2.azurecontainerapps.io'
+  prodUrl: 'https://hero-agency-luis.thankfulsea-0a741749.eastus2.azurecontainerapps.io'
   nodeVersion: '22.x'
 
 stages:
@@ -24,34 +29,13 @@ stages:
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-    - task: NodeTool@0
-      displayName: 'Instalar Node.js'
+    - task: Docker@2
+      displayName: 'Construir y publicar imagen Docker'
       inputs:
-        versionSpec: '$(nodeVersion)'
-
-    - script: npm ci
-      displayName: 'Instalar dependencias'
-
-    - task: CopyFiles@2
-      displayName: 'Preparar archivos de la app'
-      inputs:
-        Contents: |
-          package.json
-          package-lock.json
-          src/**
-          public/**
-          node_modules/**
-        TargetFolder: '$(Build.ArtifactStagingDirectory)/app'
-
-    - task: ArchiveFiles@2
-      displayName: 'Empaquetar artefacto'
-      inputs:
-        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
-        includeRootFolder: false
-        archiveType: 'zip'
-        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
-
-    - publish: '$(Build.ArtifactStagingDirectory)/app.zip'
-      artifact: 'app'
-      displayName: 'Publicar artefacto'
-
+        command: 'buildAndPush'
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(imageRepository)'
+        Dockerfile: 'Dockerfile'
+        tags: |
+          $(tag)
+          latest

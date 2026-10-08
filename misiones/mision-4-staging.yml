@@ -1,5 +1,5 @@
 # Misión 4 del demo "Examen de Licencia de Héroe"
-# Build + tests + deploy al slot staging con smoke test.
+# Build + tests + deploy a la Container App de staging con smoke test.
 
 trigger:
   branches:
@@ -7,11 +7,16 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'sc-hero-agency'     # nombre del service connection
-  webAppName: 'hero-agency-luis'          # nombre de tu App Service
+  azureSubscription: 'sc-hero-agency'               # service connection Azure Resource Manager
+  dockerRegistryServiceConnection: 'sc-hero-agency-acr'  # service connection Docker Registry (ACR)
+  containerRegistry: 'acrheroagencyluis.azurecr.io'
+  imageRepository: 'hero-agency'
+  tag: '$(Build.BuildId)'
+  containerAppName: 'hero-agency-luis'              # Container App de producción
+  stagingAppName: 'hero-agency-luis-staging'        # Container App de staging
   resourceGroup: 'rg-hero-agency'
-  stagingUrl: 'https://hero-agency-luis-staging.azurewebsites.net'
-  prodUrl: 'https://hero-agency-luis.azurewebsites.net'
+  stagingUrl: 'https://hero-agency-luis-staging.thankfulsea-0a741749.eastus2.azurecontainerapps.io'
+  prodUrl: 'https://hero-agency-luis.thankfulsea-0a741749.eastus2.azurecontainerapps.io'
   nodeVersion: '22.x'
 
 stages:
@@ -43,28 +48,16 @@ stages:
         testResultsFiles: 'test-results.xml'
         testRunTitle: 'Examen de Licencia'
 
-    - task: CopyFiles@2
-      displayName: 'Preparar archivos de la app'
+    - task: Docker@2
+      displayName: 'Construir y publicar imagen Docker'
       inputs:
-        Contents: |
-          package.json
-          package-lock.json
-          src/**
-          public/**
-          node_modules/**
-        TargetFolder: '$(Build.ArtifactStagingDirectory)/app'
-
-    - task: ArchiveFiles@2
-      displayName: 'Empaquetar artefacto'
-      inputs:
-        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
-        includeRootFolder: false
-        archiveType: 'zip'
-        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
-
-    - publish: '$(Build.ArtifactStagingDirectory)/app.zip'
-      artifact: 'app'
-      displayName: 'Publicar artefacto'
+        command: 'buildAndPush'
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(imageRepository)'
+        Dockerfile: 'Dockerfile'
+        tags: |
+          $(tag)
+          latest
 
 # ── Misión 4: Primera patrulla en staging ──────────────────────────────
 - stage: Staging
@@ -73,7 +66,7 @@ stages:
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
   - deployment: DeployStaging
-    displayName: 'Desplegar al slot staging'
+    displayName: 'Desplegar a staging'
     environment: 'staging'
     pool:
       vmImage: 'ubuntu-latest'
@@ -81,16 +74,15 @@ stages:
       runOnce:
         deploy:
           steps:
-          - task: AzureWebApp@1
-            displayName: 'Desplegar en App Service (slot staging)'
+          - download: none
+
+          - task: AzureContainerApps@1
+            displayName: 'Desplegar en Container Apps (staging)'
             inputs:
               azureSubscription: '$(azureSubscription)'
-              appType: 'webAppLinux'
-              appName: '$(webAppName)'
-              deployToSlotOrASE: true
-              resourceGroupName: '$(resourceGroup)'
-              slotName: 'staging'
-              package: '$(Pipeline.Workspace)/app/app.zip'
+              containerAppName: '$(stagingAppName)'
+              resourceGroup: '$(resourceGroup)'
+              imageToDeploy: '$(containerRegistry)/$(imageRepository):$(tag)'
 
           - script: |
               for i in $(seq 1 12); do
@@ -103,4 +95,3 @@ stages:
               echo "##vso[task.logissue type=error]Staging no respondió al /health"
               exit 1
             displayName: 'Smoke test: ¡Ya estoy aquí!'
-
