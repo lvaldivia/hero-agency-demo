@@ -1,30 +1,64 @@
-# Hero Agency: demo de CI/CD con Azure DevOps
+# Hero Agency: CI/CD con Azure DevOps, paso a paso
 
-Demo en vivo de la charla **"Azure DevOps: del código a producción con CI/CD"**. El público escanea un QR y abre la app de producción en su celular. Cada deploy que pasa por el pipeline cambia lo que ven en su pantalla: el héroe, la versión y los colores. Si entra un villano, todos lo ven, y todos ven también el rollback.
+Repositorio de la sesión **"Azure DevOps: del código a producción con CI/CD"**. Aquí está todo lo necesario para que armes el mismo demo en tu propia cuenta: una app con temática de My Hero Academia que viaja desde un commit hasta producción pasando por tests, una imagen Docker, staging, una aprobación y un rollback.
 
-La app corre como **contenedor Docker** en **Azure Container Apps**. El pipeline construye la imagen una sola vez, la sube a **Azure Container Registry (ACR)** y esa misma imagen viaja de staging a producción. Las apps jalan la imagen con **identidad administrada** y el pipeline se autentica con **Workload Identity Federation**: no hay contraseñas en ningún lado.
+## Qué vas a construir
 
-## Qué hay en el repo
+```
+git push ──► Azure Repos ──► Azure Pipelines
+                               │
+                               ├─ 1. Build y Test: tests (pestaña Tests) + imagen Docker
+                               │                    └─► Azure Container Registry (ACR)
+                               ├─ 2. Staging: deploy a la Container App de staging + smoke test
+                               ├─ 3. Aprobación manual (environment "production")
+                               └─ 4. Producción: la MISMA imagen pasa a producción (blue/green)
 
-| Ruta | Para qué sirve |
+Rollback: ./infra/rollback.sh mueve el tráfico a la revisión anterior en segundos
+```
+
+| Pieza | Servicio |
 | --- | --- |
-| `src/server.js` | API Express: `/health`, `/api/version`, votación |
-| `src/hero.js` | Lógica con la regla "Deku no pasa del 100%" (la que se rompe en la Misión 2) |
-| `src/release.json` | La versión actual: héroe, quirk, colores |
-| `releases/` | Versiones listas: `deku` (1.0.0), `todoroki` (1.1.0), `allmight` (1.2.0), `shigaraki` (6.6.6, villano) |
-| `public/index.html` | La página que ve el público; se actualiza sola cada 5 s |
-| `test/` | Tests con el runner nativo de Node (sin dependencias extra) |
-| `Dockerfile` | Multi-stage `node:22-alpine`: instala y corre `npm test`; la imagen final solo lleva lo necesario, corre sin root en el puerto 8080 |
-| `scripts/junit-reporter.js` | Reporter JUnit que la pestaña **Tests** de Azure Pipelines sí reconoce |
-| `azure-pipelines.yml` | Pipeline final: Build y Test (imagen al ACR), Staging, aprobación, Producción |
-| `misiones/` | El YAML de cada misión, para copiar y pegar en vivo |
-| `infra/setup-azure.sh` | Crea ACR, Container Apps Environment y las apps de staging y producción |
-| `infra/rollback.sh` | Rollback moviendo el tráfico a la revisión anterior (Misión 6) |
-| `infra/reset-votos.sh` | Reinicia la votación antes de cada misión |
-| `infra/cleanup.sh` | Borra todo el grupo de recursos después de la charla |
-| `infra/agente/` | Agente self-hosted de Azure Pipelines en Docker (sin cola en vivo) |
+| Código | Azure Repos |
+| Pipeline (YAML) | Azure Pipelines |
+| Imágenes Docker | Azure Container Registry (Basic, sin usuario admin) |
+| App de producción y de staging | Azure Container Apps (plan de consumo) |
+| Acceso del pipeline a Azure | Service connections con Workload Identity Federation (sin contraseñas) |
+| Acceso de la app al registro | Identidad administrada con rol AcrPull (sin contraseñas) |
 
-Comandos locales: `npm install`, `npm test`, `npm start` (abre http://localhost:3000) y `npm run release -- todoroki` para cambiar de héroe.
+## Lo que aprendes en cada misión
+
+| Misión | Concepto | Archivo del pipeline |
+| --- | --- | --- |
+| 1. Despertar del Quirk | Integración continua: cada commit construye una imagen Docker | `misiones/mision-1-build.yml` |
+| 2. El brazo roto | Tests automáticos: el código roto no avanza | `misiones/mision-2-tests.yml` |
+| 3. Nadie entra a main sin permiso | Branch policies y Pull Requests | (se configura en Azure Repos) |
+| 4. Primera patrulla en staging | Entrega continua y ambientes | `misiones/mision-4-staging.yml` |
+| 5. Licencia oficial | Aprobación manual y blue/green | `misiones/mision-5-produccion.yml` |
+| 6. Bonus Aizawa | Rollback instantáneo con revisiones | `infra/rollback.sh` |
+
+---
+
+## Requisitos
+
+- Una **suscripción de Azure** donde seas Owner (o Contributor + User Access Administrator).
+- Una **organización de Azure DevOps** (gratis): https://dev.azure.com
+- **Azure CLI**: https://learn.microsoft.com/cli/azure/install-azure-cli
+- **Docker Desktop**: https://www.docker.com/products/docker-desktop
+- **Node.js 22** o superior y **Git**. En Windows usa **Git Bash** para correr los scripts.
+
+**Costo aproximado:** unos $20–30 USD al mes mientras existan los recursos (Container Apps con 1 réplica siempre encendida + ACR Basic). Al terminar, bórralo todo con `./infra/cleanup.sh` (paso 10).
+
+---
+
+## Paso 1: Clona el repo y pruébalo en tu máquina
+
+```bash
+git clone https://github.com/lvaldivia/hero-agency-demo.git
+cd hero-agency-demo
+npm install
+npm test          # 7 tests en verde
+npm start         # abre http://localhost:3000
+```
 
 Con Docker:
 
@@ -34,185 +68,264 @@ docker run --rm -p 8080:8080 -e APP_ENV=local hero-agency
 curl localhost:8080/health
 ```
 
-## Arquitectura
+El `Dockerfile` es multi-stage (`node:22-alpine`). La primera etapa instala dependencias y corre `npm test`, así que una imagen con tests rotos nunca se construye. La imagen final solo lleva lo necesario, corre sin usuario root y escucha en el puerto 8080.
 
-| Pieza | Recurso | Nota |
-| --- | --- | --- |
-| Registro de imágenes | ACR Basic `acrheroagencyluis` | Sin admin user |
-| Producción | Container App `hero-agency-luis` | `APP_ENV=production`, modo *multiple revisions* |
-| Staging | Container App `hero-agency-luis-staging` | `APP_ENV=staging` (cinta amarilla) |
-| Entorno | Container Apps Environment `cae-hero-agency` | Plan de consumo, sin Log Analytics |
-| Pull de imágenes | Identidad administrada *system-assigned* de cada app | Rol **AcrPull** sobre el ACR |
-| Identidad del pipeline | Identidad administrada *user-assigned* `id-hero-agency-pipelines` | **Contributor** solo sobre `rg-hero-agency` y **AcrPush** sobre el ACR |
+Para cambiar de héroe: `npm run release -- todoroki` (las versiones están en `releases/`).
 
-Cada app corre **una sola réplica** porque los votos viven en memoria.
+## Paso 2: Crea la infraestructura en Azure
 
-Container Apps no tiene *deployment slots*. Staging y producción son dos apps separadas, y así `APP_ENV` queda fijo en cada una, como un *slot setting*. Producción usa revisiones: cada deploy crea una revisión nueva que recibe el 100 % del tráfico, y la anterior queda viva para el rollback.
+Elige dos nombres únicos en todo Azure:
 
----
-
-## Preparación (mínimo una semana antes)
-
-### 1. Paralelismo de Azure Pipelines
-
-El pipeline corre en un **agente self-hosted** (pool `Default`) dentro de un contenedor en tu laptop. Así no hay cola: con el plan gratis de agentes Microsoft-hosted un run puede esperar varios minutos antes de empezar, y eso en vivo es silencio. Además, el build reutiliza la caché de Docker.
-
-```bash
-docker build -t hero-agent:local infra/agente
-# Primera vez: registra el agente (PAT con Agent Pools: Read & manage)
-docker run -d --name hero-agent --restart unless-stopped \
-  -v hero-agent-data:/azp -v /var/run/docker.sock:/var/run/docker.sock \
-  -e AZP_URL=https://dev.azure.com/<org> -e AZP_TOKEN=<PAT> -e AZP_AGENT_NAME=laptop hero-agent:local
-# Luego recrea el contenedor sin AZP_TOKEN: la configuración queda en el volumen hero-agent-data
-```
-
-Requisitos el día de la charla: Docker Desktop abierto y la laptop con internet. En **Project settings > Agent pools > Default** el agente debe verse *Online*.
-
-Plan B sin laptop: en el `pool` cambia `name: 'Default'` por `vmImage: 'ubuntu-latest'`. Las organizaciones nuevas necesitan el free grant de Microsoft (https://aka.ms/azpipelines-parallelism-request; demora unos días) o 1 job paralelo comprado.
-
-### 2. Organización, proyecto y repo
-
-1. Crea el proyecto en Azure DevOps (por ejemplo, `HeroAgency`).
-2. En **Repos**, crea el repo y súbelo con `git push`.
-
-### 3. Infraestructura en Azure
+- `APP`: nombre de tu app. Solo minúsculas, números y guiones; por ejemplo `hero-agency-tunombre`.
+- `ACR`: nombre de tu registro. Solo minúsculas y números; por ejemplo `acrheroagencytunombre`.
 
 ```bash
 az login
-APP=hero-agency-luis ACR=acrheroagencyluis ./infra/setup-azure.sh
+APP=hero-agency-tunombre ACR=acrheroagencytunombre ./infra/setup-azure.sh
 ```
 
-El script hace lo siguiente:
+El script (tarda unos 10–20 minutos la primera vez):
 
-1. Crea el grupo de recursos y el ACR Basic sin admin user.
-2. Construye la imagen localmente y la sube con `az acr login` (tu sesión de Azure, sin contraseña) como `hero-agency:inicial`.
-3. Crea el Container Apps Environment y las dos apps con identidad administrada, `--registry-identity system` (el rol AcrPull se asigna solo), `ADMIN_TOKEN` como secreto y `APP_ENV` fijo.
+1. Crea el grupo de recursos `rg-hero-agency` en `eastus2`. Puedes cambiarlo con `RG=...` y `LOCATION=...`.
+2. Crea el **Azure Container Registry** Basic, sin usuario admin.
+3. Construye la imagen en tu máquina y la sube con `az acr login`, que usa tu sesión de Azure y no una contraseña.
+4. Crea el **Container Apps Environment** y dos apps:
+   - `$APP-staging` con `APP_ENV=staging` (muestra una cinta amarilla STAGING).
+   - `$APP` con `APP_ENV=production`, en modo *multiple revisions* para poder hacer rollback.
+5. Le da a cada app una **identidad administrada** con rol **AcrPull** sobre el registro. Así la app baja su imagen sin contraseñas.
+6. Guarda un `ADMIN_TOKEN` aleatorio como secreto (sirve para reiniciar la votación).
 
-Al final imprime las URLs y el `ADMIN_TOKEN`. Copia las URLs en `stagingUrl` y `prodUrl` del pipeline y de `misiones/`, y guarda el token fuera del repo.
+Al final imprime las **URLs** de producción y de staging y el **ADMIN_TOKEN**. Guárdalos: los usarás en el paso 6. No subas el token al repo.
 
-Se usa Container Apps y no App Service porque los slots de App Service requieren un plan Standard o Premium, y suscripciones nuevas suelen tener cuota 0 para esos planes.
+> ¿Por qué Container Apps y no App Service? Los *deployment slots* de App Service necesitan un plan Standard o Premium, y muchas suscripciones nuevas tienen cuota 0 para esos planes. Container Apps logra lo mismo con revisiones y es más barato para un demo.
 
-### 4. Service connections (Workload Identity Federation)
+## Paso 3: Crea el proyecto en Azure DevOps e importa el código
 
-Se necesitan dos:
+1. En https://dev.azure.com, entra a tu organización y crea un proyecto: **New project**, nombre `HeroAgency`, visibilidad **Private**.
+2. Ve a **Repos**. Como el repo está vacío, verás la opción **Import a repository**:
+   - Clone URL: `https://github.com/lvaldivia/hero-agency-demo.git`
+   - **Import**.
+3. Clónalo en tu máquina; desde ahí harás los cambios de las misiones:
+   ```bash
+   git clone https://dev.azure.com/<tu-org>/HeroAgency/_git/HeroAgency
+   ```
 
-| Nombre | Tipo | Para qué |
-| --- | --- | --- |
-| `sc-hero-agency` | Azure Resource Manager | Desplegar en Container Apps (`AzureContainerApps@1`, `AzureCLI@2`) |
-| `sc-hero-agency-acr` | Docker Registry → Azure Container Registry | `Docker@2 buildAndPush` |
+## Paso 4: Decide dónde corre el pipeline (agente)
 
-Ambas son de tipo **Workload identity federation (manual)** y usan la identidad `id-hero-agency-pipelines`. El acceso queda limitado porque esa identidad solo tiene Contributor en `rg-hero-agency` y AcrPush en el ACR. Por cada service connection hay una *federated credential* en la identidad, con el *issuer* y el *subject* que muestra Azure DevOps al crearla.
+Un **agente** es la máquina que ejecuta el pipeline. Tienes dos opciones:
 
-Si prefieres el portal: **Project settings > Service connections > New > Azure Resource Manager > Workload identity federation (automatic)**, limitado al grupo `rg-hero-agency`. Para el ACR: **Docker Registry > Azure Container Registry > Workload Identity federation**.
+**A) Agentes de Microsoft (Microsoft-hosted).** No instalas nada, pero las organizaciones nuevas no tienen agentes gratis activados. Pide el *free grant* en https://aka.ms/azpipelines-parallelism-request; Microsoft tarda de 2 a 3 días hábiles en aprobarlo. En el plan gratis un run puede esperar varios minutos en cola.
 
-### 5. Environments y aprobación
+Si eliges esta opción, cambia el `pool` en `azure-pipelines.yml` y en todos los archivos de `misiones/`:
 
-En **Pipelines > Environments** crea `staging` y `production`. En `production` entra a **Approvals and checks > Approvals** y agrega como aprobadores a ti y a la persona del público que aprobará en vivo. Esa persona debe estar invitada a la organización: pruébalo antes con su cuenta y su celular.
+```yaml
+pool:
+  vmImage: 'ubuntu-latest'
+```
 
-### 6. Primer run completo (obligatorio)
+**B) Agente self-hosted en tu laptop con Docker (sin cola).** Es la opción del repo, con `pool: name: 'Default'`.
 
-Crea el pipeline desde `azure-pipelines.yml` y córrelo completo una vez con Deku (1.0.0). Autoriza para el pipeline los dos service connections y los dos environments, desde **Security / Pipeline permissions** de cada recurso o con **Permit** en el primer run, para que no pida permisos en plena charla. Al terminar, producción muestra a Deku v1.0.0.
+1. Crea un **PAT**: **User settings → Personal access tokens → New Token**, con el scope **Agent Pools (Read & manage)** y una expiración corta.
+2. Construye y registra el agente:
+   ```bash
+   docker build -t hero-agent:local infra/agente
+   MSYS_NO_PATHCONV=1 docker run -d --name hero-agent --restart unless-stopped \
+     -v hero-agent-data:/azp -v /var/run/docker.sock:/var/run/docker.sock \
+     -e AZP_URL=https://dev.azure.com/<tu-org> -e AZP_TOKEN=<tu-PAT> -e AZP_AGENT_NAME=mi-laptop \
+     hero-agent:local
+   ```
+3. Revisa en **Project settings → Agent pools → Default → Agents** que aparezca **Online**.
+4. Opcional: el registro queda guardado en el volumen `hero-agent-data`, así que puedes recrear el contenedor sin el `-e AZP_TOKEN=...` para que el token no quede en su configuración.
 
-### 7. QR
+El agente usa el Docker de tu máquina para construir las imágenes. Tu laptop debe estar encendida y con Docker Desktop abierto mientras corran los pipelines.
 
-Genera el QR apuntando a `prodUrl` y ponlo en la lámina "Escanea el demo". La URL de staging solo se muestra en tu pantalla.
+## Paso 5: Crea los service connections
 
----
+Son los permisos del pipeline para entrar a Azure. Ve a **Project settings → Service connections → New service connection**.
 
-## Estado inicial (el día de la charla)
+**Azure Resource Manager**, para desplegar en Container Apps:
 
-- Producción muestra a **Deku v1.0.0**.
-- En `main`, `azure-pipelines.yml` tiene el contenido de `misiones/mision-1-build.yml` (haz ese commit antes de subir al escenario).
-- `main` **no** tiene branch policies todavía.
-- En el navegador: pestañas abiertas con el repo, el pipeline, la app de producción y la de staging.
-- Fuente grande en VS Code y navegador al 125–150 %.
+1. Elige **Azure Resource Manager** y luego **Workload Identity federation (automatic)**.
+2. Llena:
+   - Scope level: **Subscription**.
+   - Subscription: la tuya.
+   - Resource group: **rg-hero-agency**. Así el pipeline solo puede tocar ese grupo.
+   - Service connection name: **`sc-hero-agency`**.
+3. Deja **sin marcar** "Grant access permission to all pipelines". Lo autorizas para tu pipeline en el paso 7.
 
----
+**Docker Registry**, para que la tarea `Docker@2` suba la imagen:
 
-## Guion en vivo
+1. Elige **Docker Registry**, luego **Azure Container Registry**, y como autenticación **Workload Identity federation**.
+2. Llena:
+   - Subscription: la tuya.
+   - Azure container registry: el que creaste en el paso 2.
+   - Service connection name: **`sc-hero-agency-acr`**.
 
-Antes de cada misión con votación: `PROD_URL=... ADMIN_TOKEN=... ./infra/reset-votos.sh`
+Si usas otros nombres, cambia las variables `azureSubscription` y `dockerRegistryServiceConnection` del YAML.
 
-### Misión 0: Presentación del examen (2 min)
+## Paso 6: Ajusta las variables del pipeline
 
-Muestra la lámina del QR y espera a que el público vea a Deku en su celular. Explica las reglas: "yo doy el examen, ustedes son el jurado y votan desde su celular".
+Abre `azure-pipelines.yml` y **todos** los archivos de `misiones/`, y cambia estas variables por tus valores del paso 2:
 
-### Misión 1: Despertar del Quirk (7 min)
-
-1. Abre `azure-pipelines.yml` en Repos y recorre el YAML: `trigger`, `stages`, `jobs`, `steps`.
-2. Haz un cambio mínimo (por ejemplo, un comentario) y commit a `main`.
-3. Abre el run y lee el log en vivo mientras corre: `docker build` por etapas y el push de la imagen al ACR con el número de build como tag.
-
-Mensaje: "el código ya no se compila en mi máquina, se compila igual siempre, y lo que sale es una imagen que corre igual en cualquier lado".
-
-Si alguien pregunta: el `Dockerfile` también corre `npm test` en su primera etapa, así que una imagen con tests rotos nunca se construye. La Misión 2 los saca a un paso visible del pipeline.
-
-### Misión 2: El brazo roto (8 min)
-
-1. Reemplaza el YAML con `misiones/mision-2-tests.yml` y haz commit. Corre en verde y aparece la pestaña **Tests**.
-2. Abre la votación: "¿pasa o se rompe?".
-3. En `src/hero.js`, cambia `return Math.max(0, Math.min(100, percent));` por `return percent;` y haz commit.
-4. Falla el test "Deku nunca pasa del 100% (o se rompe los brazos)". Muestra la pestaña **Tests** con el error y que la imagen Docker ni siquiera se construyó.
-5. Señala que en el celular del público la app sigue igual: el bug nunca llegó a producción.
-6. Revierte el cambio y haz commit para dejarlo en verde.
-
-### Misión 3: Nadie entra a main sin permiso (8 min)
-
-1. **Repos > Branches > main > Branch policies > Build validation**: agrega el pipeline como validación obligatoria.
-2. Intenta un push directo a `main` desde tu terminal. Rebota con el error de política: léelo en voz alta.
-3. Crea la rama `licencia-todoroki` con dos cambios:
-   - `azure-pipelines.yml` con el contenido de `misiones/mision-5-produccion.yml`
-   - `npm run release -- todoroki`
-4. Abre el PR hacia `main`. La validación corre Build y Test (Staging no corre porque no es `main`).
-5. Cuando quede en verde, completa el PR. El merge dispara el pipeline completo.
-
-### Misión 4: Primera patrulla en staging (12 min)
-
-1. Mientras corre el stage Staging, explica el deploy de la imagen recién construida a la app de staging y el smoke test contra `/health`.
-2. Cuando termine, abre la URL de staging en tu pantalla: cinta amarilla de STAGING y **Todoroki v1.1.0**.
-3. Pide al público que mire su celular: siguen viendo a Deku v1.0.0 en producción.
-
-Mensaje: "staging y producción conviven; nadie del público vio el cambio todavía".
-
-### Misión 5: Licencia oficial (8 min)
-
-1. El run queda en pausa esperando aprobación de `production`.
-2. La persona del público aprueba desde su celular (le llega notificación por correo, o entra a la URL del run).
-3. Se promueve la imagen y, en unos segundos, todos los celulares muestran **"¡Nuevo deploy! v1.1.0"** y a Todoroki.
-4. Explica que fue un blue/green: no se reconstruyó nada. La **misma imagen** que se probó en staging se desplegó en una revisión nueva de producción, y el tráfico pasó a ella cuando estuvo lista. La revisión de Deku sigue viva, sin tráfico.
-
-Justo después de aprobar, deja en marcha la Misión 6 (siguiente sección), porque el villano necesita unos 8 minutos para llegar.
-
-### Misión 6: Bonus Aizawa (5 min)
-
-1. Crea la rama `ataque-villano`, corre `npm run release -- shigaraki`, haz commit y abre el PR con **auto-complete** activado.
-2. Mientras viaja por el pipeline, haz el resumen del recorrido o adelanta preguntas.
-3. Cuando pida aprobación, apruébalo tú. Los celulares cambian a **"¡Ataque villano!"** con Shigaraki v6.6.6.
-4. Ejecuta `./infra/rollback.sh`. También puedes hacerlo en el portal: Container App de producción → **Revisions and replicas** → 100 % de tráfico a la revisión anterior. Todoroki vuelve en segundos.
-
-Mensaje: "los tests pasaron, pero la versión era mala; con revisiones, el rollback es mover el tráfico y no un nuevo deploy".
-
-### Cierre
-
-Muestra el historial del pipeline completo y el environment `production` con su historial de deploys. Plus Ultra.
-
----
-
-## Plan B
-
-| Si pasa esto | Haz esto |
+| Variable | Valor |
 | --- | --- |
-| El YAML se rompe al editar | Copia el archivo de la misión desde `misiones/` |
-| El run se queda en cola mucho tiempo | Muestra un run exitoso previo del historial y sigue con la explicación |
-| Falla el deploy a Azure | Muestra la app con `docker run` en local y el run de la semana anterior |
-| No llega la aprobación al celular del asistente | Apruébalo tú desde tu pantalla |
-| El villano no llega a tiempo | Sáltalo y haz el rollback con la versión anterior: `./infra/rollback.sh` igual devuelve a Deku |
-| Se cae el internet | Video grabado del demo completo |
+| `containerRegistry` | `<tu-acr>.azurecr.io` |
+| `containerAppName` | tu `APP` |
+| `stagingAppName` | `<tu APP>-staging` |
+| `resourceGroup` | `rg-hero-agency` (o el que hayas usado) |
+| `stagingUrl` | la URL de staging que imprimió el script |
+| `prodUrl` | la URL de producción que imprimió el script |
 
-## Después de la charla
+Haz commit y push a `main` en tu repo de Azure Repos.
+
+## Paso 7: Environments, aprobación y primer run
+
+1. En **Pipelines → Environments**, crea dos environments: **`staging`** y **`production`** (Resource: None).
+2. En `production`, ve a **⋯ → Approvals and checks → + → Approvals**, agrégate como aprobador y haz clic en **Create**.
+3. En **Pipelines → New pipeline**, elige **Azure Repos Git**, luego tu repo, luego **Existing Azure Pipelines YAML file**, y selecciona `/misiones/mision-5-produccion.yml`. Haz clic en **Run**.
+   Para el primer run usa el pipeline completo, para dar todos los permisos de una vez.
+4. En el primer run Azure DevOps pide permiso para usar los service connections, los environments y el pool. Haz clic en **View → Permit** en cada uno.
+5. Cuando llegue a **Deploy a Producción**, apruébalo: **Review → Approve**.
+6. Abre tu URL de producción: debe mostrar a **Deku v1.0.0**. En staging debe aparecer la cinta **STAGING**.
+7. Para empezar las misiones, cambia la ruta del YAML: abre el pipeline, haz clic en **Edit**, luego en **⋯ → Settings** (arriba a la derecha), cambia "YAML file path" a `/azure-pipelines.yml` y guarda.
+
+## Paso 8: Haz las misiones
+
+El pipeline siempre lee **un solo archivo: `azure-pipelines.yml`**. Para avanzar de misión, copia el archivo de la misión encima de `azure-pipelines.yml`, haz commit y push, y espera el build.
+
+Antes de cada votación puedes reiniciar los votos:
 
 ```bash
-./infra/cleanup.sh
+PROD_URL=<tu-url-de-produccion> ADMIN_TOKEN=<tu-token> ./infra/reset-votos.sh
 ```
 
-Borra el grupo de recursos completo (ACR, Container Apps y la identidad del pipeline). Después borra los service connections de Azure DevOps (quedan apuntando a recursos que ya no existen) y revoca cualquier PAT que hayas creado para la preparación.
+### Misión 1: Despertar del Quirk (CI)
+
+`azure-pipelines.yml` ya tiene la Misión 1: solo construye la imagen y la sube al ACR.
+
+```bash
+cp misiones/mision-1-build.yml azure-pipelines.yml
+echo "# Misión 1" >> azure-pipelines.yml
+git add azure-pipelines.yml
+git commit -m "Misión 1: despertar del quirk"
+git push
+```
+
+Abre el run: el commit lo disparó solo. En el paso **Construir y publicar imagen Docker** verás el build por etapas y el push con el número de build como tag.
+
+### Misión 2: El brazo roto (tests)
+
+```bash
+cp misiones/mision-2-tests.yml azure-pipelines.yml
+git add azure-pipelines.yml
+git commit -m "Misión 2: el pipeline corre los tests"
+git push
+```
+
+Cuando quede en verde, abre la pestaña **Tests** del run: verás 7 tests. Ahora rompe la regla de Deku y súbelo:
+
+```bash
+sed -i 's/return Math.max(0, Math.min(100, percent));/return percent;/' src/hero.js
+git commit -am "Deku usa 120% de su poder"
+git push
+```
+
+El run falla en **Ejecutar tests**, la pestaña Tests muestra los tests en rojo y la imagen no se construye: el bug no llega a producción. Revierte el cambio:
+
+```bash
+git revert --no-edit HEAD
+git push
+```
+
+### Misión 3: Nadie entra a main sin permiso (branch policies)
+
+1. Ve a **Repos → Branches → main → ⋯ → Branch policies → Build validation → +**. Elige tu pipeline, Trigger **Automatic**, Policy requirement **Required**, y haz clic en **Save**.
+2. Intenta un push directo:
+   ```bash
+   echo "# Atajo" >> README.md
+   git commit -am "Push directo a main"
+   git push
+   ```
+   Rebota con `TF402455: Pushes to this branch are not permitted; you must use a pull request`. Deshaz el commit con `git reset --hard origin/main`.
+3. Crea una rama con el pipeline completo y la versión de Todoroki:
+   ```bash
+   git checkout -b licencia-todoroki
+   cp misiones/mision-5-produccion.yml azure-pipelines.yml
+   npm run release -- todoroki
+   git add azure-pipelines.yml src/release.json
+   git commit -m "Licencia de Todoroki (v1.1.0)"
+   git push -u origin licencia-todoroki
+   ```
+4. Abre un **Pull Request** hacia `main`. La validación corre Build y Test; Staging no corre porque la rama no es `main`.
+5. Cuando quede en verde, haz clic en **Complete**. El merge dispara el pipeline completo.
+
+### Misión 4: Primera patrulla en staging (CD)
+
+El stage **Deploy a Staging** despliega la imagen recién construida en la app de staging y hace un *smoke test* contra `/health` con reintentos. Abre tu URL de staging: verás **Todoroki v1.1.0** con la cinta STAGING, mientras producción sigue mostrando a Deku.
+
+### Misión 5: Licencia oficial (aprobación y blue/green)
+
+El run se detiene en **Deploy a Producción** esperando la aprobación del environment `production`. Al aprobar, la **misma imagen** que se probó en staging se despliega en una revisión nueva de producción. El tráfico pasa a ella cuando está lista, y la revisión anterior queda viva, sin tráfico, para el rollback.
+
+### Misión 6: Bonus Aizawa (rollback)
+
+```bash
+git checkout main && git pull
+git checkout -b ataque-villano
+npm run release -- shigaraki
+git commit -am "Release v6.6.6"
+git push -u origin ataque-villano
+```
+
+Abre el PR, complétalo y aprueba producción: aparece el villano Shigaraki v6.6.6. Su versión pasa todos los tests, pero es mala. Haz el rollback:
+
+```bash
+./infra/rollback.sh
+```
+
+El script mueve el 100 % del tráfico a la revisión anterior, y en segundos vuelve Todoroki. No hay reconstrucción ni redeploy. Si no usaste los nombres por defecto, pásale los tuyos: `APP=<tu-app> RG=<tu-rg> ./infra/rollback.sh`.
+
+---
+
+## Qué hay en el repo
+
+| Ruta | Para qué sirve |
+| --- | --- |
+| `src/server.js` | API Express: `/health`, `/api/version` y la votación |
+| `src/hero.js` | La regla "Deku no pasa del 100%" (la que se rompe en la Misión 2) |
+| `src/release.json` | La versión actual: héroe, quirk, colores |
+| `releases/` | Versiones listas: `deku` (1.0.0), `todoroki` (1.1.0), `allmight` (1.2.0), `shigaraki` (6.6.6, villano) |
+| `public/index.html` | La página que ve el público; se actualiza sola cada 5 s |
+| `test/` | 7 tests con el runner nativo de Node |
+| `scripts/junit-reporter.js` | Reporter JUnit que la pestaña Tests de Azure Pipelines sí reconoce |
+| `Dockerfile` | Imagen multi-stage: tests en el build, runtime sin root en el puerto 8080 |
+| `azure-pipelines.yml` | El pipeline que lee Azure DevOps |
+| `misiones/` | El YAML de cada misión |
+| `infra/setup-azure.sh` | Crea ACR y Container Apps con identidad administrada |
+| `infra/rollback.sh` | Rollback moviendo el tráfico a la revisión anterior |
+| `infra/reset-votos.sh` | Reinicia la votación |
+| `infra/cleanup.sh` | Borra todo el grupo de recursos |
+| `infra/agente/` | Agente self-hosted de Azure Pipelines en Docker |
+
+## Paso 9: Problemas comunes
+
+| Problema | Solución |
+| --- | --- |
+| El run se queda en **Queued** | Agente Microsoft: espera el free grant o usa el agente self-hosted. Agente self-hosted: revisa que esté Online y que Docker Desktop esté abierto |
+| "This pipeline needs permission to access a resource" | Abre el run y haz clic en **View → Permit** |
+| Falla `Docker@2` con error de login | Revisa que el service connection Docker Registry apunte a tu ACR y se llame como la variable `dockerRegistryServiceConnection` |
+| Falla el deploy a Container Apps | Revisa que `sc-hero-agency` tenga acceso al grupo de recursos y que `containerAppName` y `resourceGroup` sean los tuyos |
+| La pestaña Tests no aparece | Debe existir `scripts/junit-reporter.js`; el pipeline usa `npm run test:ci` |
+| En Windows, `az` falla con rutas raras | En Git Bash agrega `MSYS_NO_PATHCONV=1` antes del comando |
+| `setup-azure.sh` falla en el nombre | `APP` y `ACR` deben ser únicos en Azure; prueba con otros |
+
+## Paso 10: Limpieza (no lo olvides)
+
+```bash
+./infra/cleanup.sh            # borra el grupo de recursos completo
+docker rm -f hero-agent       # si usaste el agente self-hosted
+```
+
+Después borra los service connections del proyecto y revoca el PAT que creaste.
+
+Plus Ultra.
